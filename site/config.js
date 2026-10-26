@@ -5,7 +5,7 @@ window.BCP_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbw96gnjtZ7bphLvChEj7E-C-pVU1LW1hgq2n60yC_2ttbHBJ9zmJTSDa_UNjbsyVkESzg/exec',
 
   // Google Cloud OAuth "Web application" client ID, used only for the admin sign-in
-  GOOGLE_CLIENT_ID: 'PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE',
+  GOOGLE_CLIENT_ID: '709434409817-6hq6c3f1q9g1bcj0on3dcnuos9n7tjlp.apps.googleusercontent.com',
 
   // The UPI ID customers pay to (also used for the "Open UPI app" button, with the balance filled in).
   UPI_ID: '7094295334@okbizaxis',
