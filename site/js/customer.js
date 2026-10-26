@@ -94,7 +94,11 @@
       : S.view === 'lookup' ? LookupView()
       : S.view === 'error' ? ErrorView()
       : LoadingView();
-    el.replaceChildren(Brand(helpLink), h('div', { class: 'container' }, body));
+    const logout = S.view === 'order'
+      ? h('button', { type: 'button', class: 'logout-btn', onclick: () => { endSession('You have been logged out.'); window.scrollTo(0, 0); } }, 'Log out')
+      : null;
+    const actions = (helpLink || logout) ? h('div', { class: 'topbar-actions' }, helpLink, logout) : null;
+    el.replaceChildren(Brand(actions), h('div', { class: 'container' }, body));
   }
 
   function Hero(order) {

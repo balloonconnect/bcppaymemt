@@ -75,6 +75,14 @@ main:focus { outline: none; }
 .brand-logo { width: 44px; height: 44px; flex: none; object-fit: contain; }
 .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
 .help-link { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.topbar-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.logout-btn {
+  font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  padding: 8px 16px; border-radius: 999px; border: 1.5px solid var(--charcoal, #292b32);
+  background: transparent; color: var(--charcoal, #292b32);
+}
+.logout-btn:hover { background: var(--charcoal, #292b32); color: #fff; }
+.logout-btn:focus-visible { outline: 3px solid var(--orange, #f26a21); outline-offset: 2px; }
 
 #screen-customer .topbar { max-width: 1040px; }
 .container { width: 100%; max-width: 1040px; margin: 0 auto; padding: 8px 16px 56px; }
