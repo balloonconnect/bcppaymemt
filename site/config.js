@@ -2,7 +2,7 @@
 // None of these are secrets — they are visible to anyone who opens the site.
 window.BCP_CONFIG = {
   // Apps Script Web app URL (Deploy → Manage deployments → Web app → URL ending in /exec)
-  API_URL: 'PASTE_APPS_SCRIPT_WEB_APP_URL_HERE',
+  API_URL: 'https://script.google.com/macros/s/AKfycbw96gnjtZ7bphLvChEj7E-C-pVU1LW1hgq2n60yC_2ttbHBJ9zmJTSDa_UNjbsyVkESzg/exec',
 
   // Google Cloud OAuth "Web application" client ID, used only for the admin sign-in
   GOOGLE_CLIENT_ID: 'PASTE_GOOGLE_OAUTH_CLIENT_ID_HERE',
