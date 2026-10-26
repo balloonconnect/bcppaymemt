@@ -111,8 +111,8 @@ function actionSubmitProof_(body) {
   var ref = verifyToken_(body.token);
 
   var utr = String(body.utr || '').replace(/\s+/g, '').toUpperCase();
-  if (!/^[A-Z0-9]{8,30}$/.test(utr)) {
-    throw new ApiError('invalid_utr', 'Enter a valid UPI transaction ID / UTR (8–30 letters and numbers, no spaces).');
+  if (!/^[A-Z0-9]{5}$/.test(utr)) {
+    throw new ApiError('invalid_utr', 'Enter only the last 5 digits of your UPI transaction ID / UTR.');
   }
 
   var img = body.image || {};
@@ -290,7 +290,8 @@ function actionAdminDecide_(body) {
         driveUrl = driveUrl || cleanDriveUrl_(found.order.DriveUrl);
         if (!driveUrl) throw new ApiError('invalid_drive_url', 'This approval completes the payment — add the Google Drive link for the photos (https://drive.google.com/…).');
       }
-      var logLine = Utilities.formatDate(new Date(), TZ, 'dd MMM yyyy HH:mm') + ' — ' + inr_(received) + ' verified (UTR ' + String(found.order.UTR || '—') + ') by ' + admin;
+      // One line per verified payment: ISO time | amount | UTR (last 5) | verified by
+      var logLine = [new Date().toISOString(), received, String(found.order.UTR || ''), admin].join('|');
       var patch = {
         Status: complete ? ST.APPROVED : ST.PARTIALLY_PAID,
         Paid: complete ? total : newPaid,
@@ -324,6 +325,36 @@ function actionAdminDecide_(body) {
 
 /* ───────────────────────────── Order model helpers ──────────────────────────── */
 
+// Verified payments recorded in PaymentLog, oldest first.
+function ledger_(o) {
+  var out = [];
+  String(o.PaymentLog || '').split('\n').forEach(function (line) {
+    var p = line.split('|');
+    if (p.length < 3) return;
+    var at = new Date(p[0]);
+    var amount = num_(p[1]);
+    if (isNaN(at) || amount <= 0) return;
+    out.push({ at: at.toISOString(), amount: amount, utr: p[2], by: p[3] || '' });
+  });
+  return out;
+}
+
+// What the customer sees as "payment history".
+function historyFor_(o, status, paid) {
+  var rows = ledger_(o);
+  var logged = rows.reduce(function (n, r) { return n + r.amount; }, 0);
+  var history = [];
+  var earlier = round2_(paid - logged);
+  if (earlier > 0) history.push({ kind: 'earlier', at: '', amount: earlier, utr: '' });
+  rows.forEach(function (r) { history.push({ kind: 'verified', at: r.at, amount: r.amount, utr: r.utr }); });
+  if (status === ST.PENDING) {
+    history.push({ kind: 'pending', at: iso_(o.SubmittedAt), amount: num_(o.PaymentAmount), utr: String(o.UTR || '').trim() });
+  } else if (status === ST.NEEDS_CORRECTION && num_(o.PaymentAmount) > 0) {
+    history.push({ kind: 'correction', at: iso_(o.SubmittedAt), amount: num_(o.PaymentAmount), utr: String(o.UTR || '').trim() });
+  }
+  return history;
+}
+
 function publicOrder_(o) {
   var status = normStatus_(o.Status);
   var total = num_(o.Total);
@@ -342,6 +373,7 @@ function publicOrder_(o) {
     utr: (status === ST.PENDING || status === ST.NEEDS_CORRECTION || status === ST.APPROVED) ? String(o.UTR || '').trim() : '',
     submittedAt: iso_(o.SubmittedAt),
     claimedAmount: status === ST.PENDING ? num_(o.PaymentAmount) : 0,
+    history: historyFor_(o, status, paid),
     reviewNote: (status === ST.NEEDS_CORRECTION || status === ST.PARTIALLY_PAID) ? String(o.ReviewNote || '') : '',
     // The photo link is only ever released for approved orders.
     driveUrl: status === ST.APPROVED ? cleanDriveUrl_(o.DriveUrl) : ''
@@ -358,7 +390,7 @@ function adminOrder_(o, utrRefs) {
   base.driveUrl = cleanDriveUrl_(o.DriveUrl);
   base.reviewedAt = iso_(o.ReviewedAt);
   base.verifiedAmount = o.VerifiedAmount === '' ? null : num_(o.VerifiedAmount);
-  base.paymentLog = String(o.PaymentLog || '');
+  base.ledger = ledger_(o);
   base.utr = String(o.UTR || '').trim();
   base.hasProof = !!String(o.ProofFileId || '').trim();
   base.duplicateUtrRefs = others;

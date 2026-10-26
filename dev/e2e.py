@@ -18,7 +18,7 @@ d.rectangle([0, 0, 900, 220], fill='#5F259F')
 d.text((60, 90), 'Payment successful', fill='white')
 d.text((60, 330), 'Rs 7,000.00', fill='#111')
 d.text((60, 420), 'To: bcp.studio@okhdfc', fill='#333')
-d.text((60, 480), 'UTR: 426288001234', fill='#333')
+d.text((60, 480), 'UTR: ...01234', fill='#333')
 png_path = os.path.join(SHOTS, '_proof.png'); img.save(png_path)
 bad_path = os.path.join(SHOTS, '_not_an_image.png'); open(bad_path, 'wb').write(b'this is not really an image' * 40)
 
@@ -74,15 +74,15 @@ try:
         cust.screenshot(path=f'{SHOTS}/02-customer-notsubmitted.png', full_page=True)
 
         cust.get_by_role('button', name='Submit Payment Proof').click()
-        expect(cust.locator('#f-utr-err')).to_contain_text('Enter the UPI transaction ID')
+        expect(cust.locator('#f-utr-err')).to_contain_text('Enter the last 5 digits')
         expect(cust.locator('#f-shot-err')).to_contain_text('upload a screenshot'); ok('submit blocked without UTR and screenshot')
-        cust.fill('#f-utr', 'abc'); cust.get_by_role('button', name='Submit Payment Proof').click()
-        expect(cust.locator('#f-utr-err')).to_contain_text('8–30 letters and numbers'); ok('malformed UTR rejected')
+        cust.fill('#f-utr', '426288001234'); cust.get_by_role('button', name='Submit Payment Proof').click()
+        expect(cust.locator('#f-utr-err')).to_contain_text('only the last 5 digits'); ok('a full-length UTR is rejected — only the last 5 digits are accepted')
         cust.set_input_files('#f-shot', bad_path)
         expect(cust.locator('#f-shot-err')).to_contain_text('couldn’t read that image'); ok('non-image file rejected')
         cust.set_input_files('#f-shot', png_path)
         expect(cust.get_by_text('Screenshot ready')).to_be_visible(); ok('screenshot accepted and previewed')
-        cust.fill('#f-utr', '4262 8800 1234')
+        cust.fill('#f-utr', '01 234')
         cust.screenshot(path=f'{SHOTS}/03-customer-ready-to-submit.png', full_page=True)
         cust.get_by_role('button', name='Submit Payment Proof').click()
         expect(cust.get_by_text('Payment verification pending').first).to_be_visible()
@@ -90,7 +90,7 @@ try:
         expect(cust.locator('.pay')).to_have_count(0); ok('proof submitted → status switches to pending on the same screen, payment form gone')
         cust.screenshot(path=f'{SHOTS}/04-customer-pending.png', full_page=True)
         row = get('/__test/order?ref=BCP-2026-0148')
-        assert row['Status'] == 'PENDING' and row['UTR'] == '426288001234' and row['ProofFileId'] and row['OwnerEmailStatus'].startswith('sent'), row
+        assert row['Status'] == 'PENDING' and row['UTR'] == '01234' and row['ProofFileId'] and row['OwnerEmailStatus'].startswith('sent'), row
         assert get('/__test/mail')[0]['subject'].startswith('Payment proof submitted'); ok('backend stored proof and the owner email was sent')
 
         # ───────────── Admin (desktop) ─────────────
@@ -107,7 +107,7 @@ try:
         expect(adm.locator('.pill-count')).to_contain_text('1 pending submission'); ok('signed-in admin sees the pending count')
         expect(adm.locator('.session-chip')).to_contain_text('owner@example.com')
         expect(adm.locator('.shot-btn img')).to_be_visible(timeout=10000); ok('uploaded screenshot preview loads for the admin')
-        for want in ['Priya Raman', 'BCP-2026-0148', '426288001234', '₹12,000', '₹7,000']:
+        for want in ['Priya Raman', 'BCP-2026-0148', '01234', '₹12,000', '₹7,000']:
             assert want in adm.inner_text('body'), want
         adm.screenshot(path=f'{SHOTS}/06-admin-review.png', full_page=True)
 
@@ -146,7 +146,7 @@ try:
         c2 = mob.new_page(); watch(c2, 'customer2')
         c2.goto(f'{BASE}/?ref=BCP-2026-0149')
         c2.fill('#f-phone', '9000000001'); c2.get_by_role('button', name='View my photos & payment').click()
-        c2.set_input_files('#f-shot', png_path); c2.fill('#f-utr', 'WRONG1234567')
+        c2.set_input_files('#f-shot', png_path); c2.fill('#f-utr', '99999')
         c2.get_by_role('button', name='Submit Payment Proof').click()
         expect(c2.get_by_text('Payment verification pending').first).to_be_visible()
         adm.reload()
@@ -162,7 +162,7 @@ try:
         expect(c2.get_by_role('button', name='Submit Payment Proof')).to_be_visible()
         assert 'drive.google.com' not in c2.content(); ok('customer sees the admin note and can re-upload; no download button')
         c2.screenshot(path=f'{SHOTS}/09-customer-needs-correction.png', full_page=True)
-        c2.set_input_files('#f-shot', png_path); c2.fill('#f-utr', 'RIGHT7654321X')
+        c2.set_input_files('#f-shot', png_path); c2.fill('#f-utr', '77777')
         c2.get_by_role('button', name='Submit Payment Proof').click()
         expect(c2.get_by_text('Payment verification pending').first).to_be_visible(); ok('re-upload after rejection returns the order to pending')
 
@@ -180,7 +180,7 @@ try:
         expect(c4.locator('#f-amount')).to_be_hidden(); ok('payment card offers "Pay full balance" (default) and "Pay a custom amount"')
         c4.locator('label[for=pm-custom]').click()
         expect(c4.locator('#f-amount')).to_be_visible()
-        c4.set_input_files('#f-shot', png_path); c4.fill('#f-utr', 'PART1UTR12345')
+        c4.set_input_files('#f-shot', png_path); c4.fill('#f-utr', '12121')
         c4.get_by_role('button', name='Submit Payment Proof').click()
         expect(c4.locator('#f-amount-err')).to_contain_text('Enter the amount you are paying now'); ok('custom amount is required')
         c4.fill('#f-amount', '15000'); c4.get_by_role('button', name='Submit Payment Proof').click()
@@ -220,11 +220,13 @@ try:
         expect(c4.get_by_text('Partial payment received')).to_be_visible()
         expect(c4.get_by_role('heading', name='Pay the remaining ₹6,000 to unlock your photos')).to_be_visible()
         assert 'drive.google.com' not in c4.content(); expect(c4.get_by_role('link', name='View & Download Photos')).to_have_count(0)
-        expect(c4.locator('.summary')).to_contain_text('₹4,000'); expect(c4.locator('.summary-balance')).to_contain_text('₹6,000')
+        expect(c4.locator('.summary').first).to_contain_text('₹4,000'); expect(c4.locator('.summary-balance')).to_contain_text('₹6,000')
+        hist = c4.locator('.history'); expect(hist).to_contain_text('₹4,000'); expect(hist).to_contain_text('UTR …12121'); expect(hist).to_contain_text('Verified')
+        ok('customer sees a payment history with the verified ₹4,000 and its last-5 UTR digits')
         ok('customer sees paid ₹4,000 / balance ₹6,000, no download button, and can pay again')
         c4.screenshot(path=f'{SHOTS}/14-customer-part-paid.png', full_page=True)
         expect(c4.locator('.pay-amount strong')).to_have_text('₹6,000')
-        c4.set_input_files('#f-shot', png_path); c4.fill('#f-utr', 'FINAL2UTR9999')
+        c4.set_input_files('#f-shot', png_path); c4.fill('#f-utr', '34343')
         c4.get_by_role('button', name='Submit Payment Proof').click()
         expect(c4.locator('.status')).to_contain_text('₹6,000'); expect(c4.get_by_text('Payment verification pending').first).to_be_visible()
 
@@ -238,6 +240,7 @@ try:
         c4.reload()
         expect(c4.get_by_text('Payment Verified', exact=True)).to_be_visible()
         link = c4.get_by_role('link', name='View & Download Photos'); assert link.get_attribute('href') == DRIVE
+        expect(c4.locator('.history')).to_contain_text('UTR …34343'); expect(c4.locator('.history-row')).to_have_count(2)
         expect(c4.locator('.summary-balance')).to_contain_text('₹0'); ok('final payment verified → photos unlock and balance shows ₹0')
         row = get('/__test/order?ref=BCP-2026-0152'); assert row['Status'] == 'APPROVED' and row['Paid'] == 10000, row
         c4.screenshot(path=f'{SHOTS}/15-customer-paid-in-full.png', full_page=True)

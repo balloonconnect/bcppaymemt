@@ -56,20 +56,27 @@ console.log('Payment proof submission');
 t('validates UTR and image', () => {
   const g = fresh(); const { token } = login(g).data;
   assert.equal(g.call({ action: 'submitProof', token, utr: '123', image: IMG }).error, 'invalid_utr');
-  assert.equal(g.call({ action: 'submitProof', token, utr: '123456789012', image: { mime: 'image/gif', data: IMG.data } }).error, 'invalid_image');
-  assert.equal(g.call({ action: 'submitProof', token, utr: '123456789012', image: { mime: 'image/jpeg', data: Buffer.alloc(3000, 1).toString('base64') } }).error, 'invalid_image');
-  assert.equal(g.call({ action: 'submitProof', token, utr: '123456789012' }).error, 'invalid_image');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '12345', image: { mime: 'image/gif', data: IMG.data } }).error, 'invalid_image');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '12345', image: { mime: 'image/jpeg', data: Buffer.alloc(3000, 1).toString('base64') } }).error, 'invalid_image');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '12345' }).error, 'invalid_image');
+});
+t('the UTR must be exactly the last 5 characters', () => {
+  const g = fresh(); const { token } = login(g).data;
+  const sub = (utr) => g.call({ action: 'submitProof', token, utr, image: IMG });
+  assert.equal(sub('1234').error, 'invalid_utr'); assert.equal(sub('426288001234').error, 'invalid_utr');
+  assert.equal(sub('12-34').error, 'invalid_utr'); assert.equal(sub('').error, 'invalid_utr');
+  const ok = sub('0 1 2 3 4'); assert.equal(ok.ok, true); assert.equal(ok.data.order.utr, '01234');
 });
 t('rejects tampered or foreign tokens', () => {
   const g = fresh(); const { token } = login(g).data;
   const bad = token.slice(0, -3) + 'AAA';
-  assert.equal(g.call({ action: 'submitProof', token: bad, utr: '123456789012', image: IMG }).error, 'session_expired');
+  assert.equal(g.call({ action: 'submitProof', token: bad, utr: '12345', image: IMG }).error, 'session_expired');
   assert.equal(g.call({ action: 'status', token: 'x.y' }).error, 'session_expired');
 });
 t('stores proof, goes PENDING, emails the owner (escaped) and records the real result', () => {
   const g = fresh(); const { token } = login(g).data;
-  const r = g.call({ action: 'submitProof', token, utr: '4262 8800 1234', image: IMG });
-  assert.equal(r.ok, true); assert.equal(r.data.order.status, 'PENDING'); assert.equal(r.data.order.utr, '426288001234');
+  const r = g.call({ action: 'submitProof', token, utr: '01 234', image: IMG });
+  assert.equal(r.ok, true); assert.equal(r.data.order.status, 'PENDING'); assert.equal(r.data.order.utr, '01234');
   assert.equal(g.outbox.length, 1);
   const mail = g.outbox[0].payload;
   assert.deepEqual(mail.to, ['owner@example.com']);
@@ -81,22 +88,22 @@ t('stores proof, goes PENDING, emails the owner (escaped) and records the real r
 });
 t('blocks a second submission while pending', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
-  assert.equal(g.call({ action: 'submitProof', token, utr: '426288001299', image: IMG }).error, 'already_pending');
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
+  assert.equal(g.call({ action: 'submitProof', token, utr: '01299', image: IMG }).error, 'already_pending');
 });
 t('reports email failure honestly instead of faking success', () => {
   const g = fresh({ resendFail: 422 }); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   assert.ok(g.readOrder('BCP-2026-0148').OwnerEmailStatus.startsWith('failed: HTTP 422'));
 });
 t('reports "not_configured" when Resend is not set up', () => {
   const g = fresh({ props: { RESEND_API_KEY: '' } }); const { token } = login(g).data;
-  const r = g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  const r = g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   assert.equal(r.ok, true); assert.equal(g.readOrder('BCP-2026-0148').OwnerEmailStatus, 'not_configured');
 });
 t('refuses proof when nothing is due', () => {
   const g = fresh(); const { token } = login(g, 'BCP-2026-0149', '9000000001').data;
-  assert.equal(g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG }).error, 'no_payment_due');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '01234', image: IMG }).error, 'no_payment_due');
 });
 
 console.log('Admin access');
@@ -115,8 +122,8 @@ t('is closed when admin sign-in is not configured', () => {
 t('lists submissions with pending count, screenshot and duplicate-UTR flags', () => {
   const g = fresh();
   const a = login(g).data.token; const b = login(g, 'BCP-2026-0150', '9000000002').data.token;
-  g.call({ action: 'submitProof', token: a, utr: 'SAMEUTR12345', image: IMG });
-  g.call({ action: 'submitProof', token: b, utr: 'SAMEUTR12345', image: IMG });
+  g.call({ action: 'submitProof', token: a, utr: '12345', image: IMG });
+  g.call({ action: 'submitProof', token: b, utr: '12345', image: IMG });
   const r = g.call({ action: 'admin.list', idToken: 'GOOD' }).data;
   assert.equal(r.pendingCount, 2); assert.equal(r.admin, 'owner@example.com');
   assert.deepEqual(r.orders[0].duplicateUtrRefs, ['BCP-2026-0150']);
@@ -129,7 +136,7 @@ t('lists submissions with pending count, screenshot and duplicate-UTR flags', ()
 console.log('Approve / reject');
 t('approval needs verification + a real Google Drive link', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   const base = { action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve' };
   assert.equal(g.call({ ...base, verified: false, driveUrl: DRIVE }).error, 'not_verified');
   assert.equal(g.call({ ...base, verified: true, driveUrl: 'https://evil.example.com/drive.google.com/folders/1AbCdEfGhIjKlMnOp' }).error, 'invalid_drive_url');
@@ -138,7 +145,7 @@ t('approval needs verification + a real Google Drive link', () => {
 });
 t('approval releases the link to the customer, clears the balance and emails them', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   const r = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true, driveUrl: ' ' + DRIVE + ' ', note: 'Thanks!' });
   assert.equal(r.ok, true); assert.equal(r.data.order.status, 'APPROVED'); assert.equal(r.data.order.verifiedAmount, 7000);
   const cust = g.call({ action: 'status', token }).data.order;
@@ -159,18 +166,18 @@ t('drive sharing check reports public / restricted / unverified', () => {
 });
 t('rejection keeps the link hidden, shows the note, and allows re-upload', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   assert.equal(g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'reject', note: 'ab' }).error, 'note_required');
   const r = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'reject', note: 'Amount received is ₹5,000, please pay the full balance.' });
   assert.equal(r.data.order.status, 'NEEDS_CORRECTION');
   const cust = g.call({ action: 'status', token }).data.order;
   assert.equal(cust.status, 'NEEDS_CORRECTION'); assert.equal(cust.driveUrl, ''); assert.ok(cust.reviewNote.includes('₹5,000'));
-  const again = g.call({ action: 'submitProof', token, utr: 'NEWUTR987654', image: IMG });
+  const again = g.call({ action: 'submitProof', token, utr: '87654', image: IMG });
   assert.equal(again.ok, true); assert.equal(again.data.order.status, 'PENDING'); assert.equal(again.data.order.reviewNote, '');
 });
 t('never edits the Total column; Paid rises only by the verified amount', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount: 2000 });
   g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true });
   const row = g.readOrder('BCP-2026-0148'); assert.equal(row.Paid, 7000); assert.equal(row.Total, 12000);
 });
@@ -179,7 +186,7 @@ console.log('Full or custom payment');
 const decide = (g, extra) => g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true, ...extra });
 t('a customer can pay a custom amount; the amount is validated', () => {
   const g = fresh(); const { token } = login(g).data;
-  const sub = (amount) => g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount });
+  const sub = (amount) => g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount });
   assert.equal(sub(0).error, 'invalid_amount'); assert.equal(sub(-5).error, 'invalid_amount');
   assert.equal(sub('abc').error, 'invalid_amount'); assert.equal(sub(10.123).error, 'invalid_amount');
   assert.equal(sub(7000.01).error, 'amount_too_high');
@@ -189,12 +196,12 @@ t('a customer can pay a custom amount; the amount is validated', () => {
 });
 t('omitting the amount means the full balance', () => {
   const g = fresh(); const { token } = login(g).data;
-  const r = g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  const r = g.call({ action: 'submitProof', token, utr: '01234', image: IMG });
   assert.equal(r.data.order.claimedAmount, 7000);
 });
 t('a partial payment updates paid / balance but keeps the photos locked', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount: 2000 });
   const r = decide(g, { note: 'Received ₹2,000, thanks' });
   assert.equal(r.ok, true); assert.equal(r.data.order.status, 'PARTIALLY_PAID'); assert.equal(r.data.order.verifiedAmount, 2000);
   const cust = g.call({ action: 'status', token }).data.order;
@@ -204,25 +211,25 @@ t('a partial payment updates paid / balance but keeps the photos locked', () => 
   assert.equal(cust.utr, ''); assert.equal(cust.reviewNote, 'Received ₹2,000, thanks');
   assert.ok(g.outbox[1].payload.subject.includes('balance'), 'customer gets a balance email');
   assert.ok(!g.outbox[1].payload.html.includes('drive.google.com'));
-  assert.ok(g.readOrder('BCP-2026-0148').PaymentLog.includes('₹2,000'));
+  assert.ok(g.readOrder('BCP-2026-0148').PaymentLog.includes('|2000|01234|owner@example.com'));
 });
 t('the customer can pay again after a partial payment; the final payment unlocks the photos', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount: 2000 });
   decide(g, {});
-  const second = g.call({ action: 'submitProof', token, utr: 'SECONDUTR9999', image: IMG, amount: 5000 });
+  const second = g.call({ action: 'submitProof', token, utr: '09999', image: IMG, amount: 5000 });
   assert.equal(second.ok, true); assert.equal(second.data.order.claimedAmount, 5000);
-  assert.equal(g.call({ action: 'submitProof', token, utr: 'THIRDUTR99999', image: IMG, amount: 100 }).error, 'already_pending');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '99999', image: IMG, amount: 100 }).error, 'already_pending');
   const fin = decide(g, {});
   assert.equal(fin.data.order.status, 'APPROVED');
   const cust = g.call({ action: 'status', token }).data.order;
   assert.equal(cust.driveUrl, DRIVE); assert.equal(cust.balance, 0); assert.equal(cust.paid, 12000);
   assert.equal(g.readOrder('BCP-2026-0148').Paid, 12000);
-  assert.equal(g.call({ action: 'submitProof', token, utr: 'FOURTHUTR9999', image: IMG }).error, 'already_approved');
+  assert.equal(g.call({ action: 'submitProof', token, utr: '19999', image: IMG }).error, 'already_approved');
 });
 t('the owner can correct the received amount; it cannot exceed the balance', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 3000 });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount: 3000 });
   assert.equal(decide(g, { verifiedAmount: 7000.5 }).error, 'amount_too_high');
   assert.equal(decide(g, { verifiedAmount: 0 }).error, 'invalid_amount');
   const r = decide(g, { verifiedAmount: 1500 });
@@ -230,7 +237,7 @@ t('the owner can correct the received amount; it cannot exceed the balance', () 
 });
 t('completing the payment needs a Drive link (from the sheet or the form)', () => {
   const g = fresh(); const t3 = login(g, 'BCP-2026-0150', '9000000002').data.token;
-  g.call({ action: 'submitProof', token: t3, utr: '426288001234', image: IMG });
+  g.call({ action: 'submitProof', token: t3, utr: '01234', image: IMG });
   const base = { action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'approve', verified: true };
   assert.equal(g.call({ ...base, driveUrl: '' }).error, 'invalid_drive_url');
   const ok = g.call({ ...base, driveUrl: DRIVE });
@@ -238,17 +245,38 @@ t('completing the payment needs a Drive link (from the sheet or the form)', () =
 });
 t('a partial approval does not need a Drive link, and a rejected partial payment changes nothing', () => {
   const g = fresh(); const t3 = login(g, 'BCP-2026-0150', '9000000002').data.token;
-  g.call({ action: 'submitProof', token: t3, utr: '426288001234', image: IMG, amount: 1000 });
+  g.call({ action: 'submitProof', token: t3, utr: '01234', image: IMG, amount: 1000 });
   const r = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'approve', verified: true, verifiedAmount: 1000 });
   assert.equal(r.data.order.status, 'PARTIALLY_PAID'); assert.equal(r.data.order.balance, 4000);
-  g.call({ action: 'submitProof', token: t3, utr: 'ANOTHERUTR123', image: IMG, amount: 500 });
+  g.call({ action: 'submitProof', token: t3, utr: '00123', image: IMG, amount: 500 });
   const rej = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'reject', note: 'Not received in bank.' });
   assert.equal(rej.data.order.status, 'NEEDS_CORRECTION'); assert.equal(rej.data.order.paid, 2000);
   assert.equal(g.readOrder('BCP-2026-0150').Paid, 2000);
 });
+t('payment history: earlier payment, verified payments (with UTR digits) and the one under review', () => {
+  const g = fresh(); const { token } = login(g).data;
+  let h = g.call({ action: 'status', token }).data.order.history;
+  assert.deepEqual(h.map((x) => [x.kind, x.amount]), [['earlier', 5000]]);
+  g.call({ action: 'submitProof', token, utr: '11111', image: IMG, amount: 2000 });
+  h = g.call({ action: 'status', token }).data.order.history;
+  assert.deepEqual(h.map((x) => [x.kind, x.amount, x.utr]), [['earlier', 5000, ''], ['pending', 2000, '11111']]);
+  decide(g, {});
+  g.call({ action: 'submitProof', token, utr: '22222', image: IMG, amount: 3000 });
+  decide(g, {});
+  h = g.call({ action: 'status', token }).data.order.history;
+  assert.deepEqual(h.map((x) => [x.kind, x.amount, x.utr]), [['earlier', 5000, ''], ['verified', 2000, '11111'], ['verified', 3000, '22222']]);
+  assert.ok(h[1].at && h[2].at);
+  g.call({ action: 'submitProof', token, utr: '33333', image: IMG, amount: 2000 });
+  g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'reject', note: 'Not found in bank.' });
+  h = g.call({ action: 'status', token }).data.order.history;
+  assert.equal(h[h.length - 1].kind, 'correction');
+  const adm = g.call({ action: 'admin.list', idToken: 'GOOD' }).data.orders[0];
+  assert.equal(adm.ledger.length, 2); assert.equal(adm.ledger[0].by, 'owner@example.com');
+  assert.ok(!JSON.stringify(h).includes('owner@example.com'), 'customer history must not expose admin emails');
+});
 t('admin list shows part-paid orders in their own bucket', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  g.call({ action: 'submitProof', token, utr: '01234', image: IMG, amount: 2000 });
   decide(g, {});
   const r = g.call({ action: 'admin.list', idToken: 'GOOD' }).data;
   assert.equal(r.partialCount, 1); assert.equal(r.pendingCount, 0); assert.equal(r.orders[0].status, 'PARTIALLY_PAID');

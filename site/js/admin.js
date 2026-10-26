@@ -233,7 +233,7 @@
       h('div', { class: 'qi-mid' }, o.reference + ' · ' + (o.eventType || 'Event')),
       h('div', { class: 'qi-bot' },
         h('span', null, o.status === 'PENDING' ? 'Submitted ' + BCP.timeAgo(o.submittedAt) : 'Reviewed ' + BCP.timeAgo(o.reviewedAt)),
-        o.duplicateUtrRefs.length ? Badge('bad', 'Duplicate UTR', 'alert') : null));
+        o.duplicateUtrRefs.length ? Badge('bad', 'Same UTR digits', 'alert') : null));
   }
 
   function StatusBadge(o) {
@@ -254,7 +254,7 @@
           h('p', { class: 'detail-sub' }, o.reference + ' · ' + (o.eventType || 'Event') + (o.eventDate ? ' · ' + o.eventDate : ''))),
         StatusBadge(o)),
       o.duplicateUtrRefs.length
-        ? Notice('bad', [h('strong', null, 'Duplicate UTR. '), 'This transaction ID was also submitted for ' + o.duplicateUtrRefs.join(', ') + '. Check your bank statement carefully before approving.'], 'alert')
+        ? Notice('bad', [h('strong', null, 'Same last 5 digits. '), 'These UTR digits were also submitted for ' + o.duplicateUtrRefs.join(', ') + '. With only 5 digits this can be a coincidence — match the amount and time in your bank statement before approving.'], 'alert')
         : null,
       h('div', { class: 'detail-grid' },
         h('div', { class: 'stack' },
@@ -265,12 +265,12 @@
               row('Delivery reference', o.reference),
               h('div', { class: 'detail-row' }, h('dt', null, 'Phone'), h('dd', null, o.phone ? h('a', { href: 'tel:' + o.phone.replace(/[^\d+]/g, '') }, o.phone) : '—')),
               o.email ? row('Email', o.email) : null,
-              h('div', { class: 'detail-row' }, h('dt', null, 'UPI transaction ID / UTR'), h('dd', { class: 'utr' }, h('span', null, o.utr || '—'), utrCopy)),
+              h('div', { class: 'detail-row' }, h('dt', null, 'UTR (last 5 digits)'), h('dd', { class: 'utr' }, h('span', null, o.utr || '—'), utrCopy)),
               o.status === 'PENDING' && o.claimedAmount ? row('Customer says they paid', inr(o.claimedAmount)) : null,
               row('Submitted', BCP.dateTime(o.submittedAt)))),
           PaymentSummary(o, { balanceLabel: 'Balance due' }),
-          o.paymentLog ? h('div', { class: 'card' }, h('h3', { class: 'card-title' }, 'Payment history'),
-            h('ul', { class: 'pay-log' }, o.paymentLog.split('\n').map((l) => h('li', null, l)))) : null,
+          o.ledger && o.ledger.length ? h('div', { class: 'card' }, h('h3', { class: 'card-title' }, 'Payment history'),
+            h('ul', { class: 'pay-log' }, o.ledger.map((l) => h('li', null, BCP.dateTime(l.at) + ' — ' + inr(l.amount) + ' verified · UTR …' + l.utr + (l.by ? ' · by ' + l.by : ''))))) : null,
           NotificationsCard(o)),
         h('div', { class: 'stack' }, ScreenshotCard(o), o.status === 'PENDING' ? ActionsCard(o) : ReviewedCard(o))));
   }
@@ -350,7 +350,7 @@
     const verifiedErr = h('p', { class: 'field-error', id: 'a-verified-err', role: 'alert' });
     const verifyRow = h('div', { class: 'check-row' },
       verified,
-      h('label', { for: 'a-verified' }, 'I checked my bank / UPI app and confirm the amount below was received for UTR ', h('strong', null, o.utr || '—'), '.'));
+      h('label', { for: 'a-verified' }, 'I checked my bank / UPI app and confirm the amount below was received (UTR ending ', h('strong', null, o.utr || '—'), ').'));
 
     const amountField = Field('a-amount', 'Amount received (₹)',
       h('input', { type: 'text', name: 'amount', inputmode: 'decimal', autocomplete: 'off', maxlength: '10' }),
@@ -457,7 +457,7 @@
 
     return h('section', { class: 'card actions', 'aria-labelledby': 'actions-title' },
       h('h3', { id: 'actions-title', class: 'card-title' }, 'Review & decide'),
-      h('p', { class: 'field-hint' }, 'Check the amount and UTR in your bank or UPI app first — the screenshot alone isn’t proof.'),
+      h('p', { class: 'field-hint' }, 'Check the amount and the last 5 digits of the UTR in your bank or UPI app first — the screenshot alone isn’t proof.'),
       verifyRow, verifiedErr,
       amountField.el, outcome,
       driveField.el, driveStatus,

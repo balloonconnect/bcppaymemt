@@ -177,8 +177,27 @@
       Hero(order),
       StatusPanel(order),
       h('div', { class: 'grid' },
-        h('div', { class: 'col' }, EventDetails(order), PaymentSummary(order)),
+        h('div', { class: 'col' }, EventDetails(order), PaymentSummary(order), PaymentHistory(order)),
         canPay ? h('div', { class: 'col' }, PayCard(order)) : null));
+  }
+
+  function PaymentHistory(order) {
+    const rows = order.history || [];
+    if (!rows.length) return null;
+    const label = { verified: ['ok', 'Verified', 'check'], earlier: ['neutral', 'Recorded by studio', 'info'], pending: ['warn', 'Under review', 'clock'], correction: ['bad', 'Needs correction', 'alert'] };
+    return h('div', { class: 'card' },
+      h('h2', { class: 'card-title' }, 'Payment history'),
+      h('ul', { class: 'history', 'aria-label': 'Payments on this order' }, rows.map((r) => {
+        const [kind, text, ic] = label[r.kind] || label.verified;
+        const when = r.at ? BCP.dateTime(r.at) : r.kind === 'earlier' ? 'Paid before online payments' : '';
+        return h('li', { class: 'history-row' },
+          h('div', { class: 'history-main' },
+            h('strong', null, inr(r.amount)),
+            h('span', { class: 'history-meta' }, [when, r.utr ? 'UTR …' + r.utr : ''].filter(Boolean).join(' · '))),
+          Badge(kind, text, ic));
+      })),
+      h('dl', { class: 'summary history-total' },
+        h('div', { class: 'summary-row' }, h('dt', null, 'Total verified'), h('dd', null, inr(order.paid)))));
   }
 
   function EventDetails(order) {
@@ -210,7 +229,7 @@
         h('p', { class: 'status-text' }, 'Your payment proof has been submitted. We will notify you once it is verified.'),
         h('dl', { class: 'meta' },
           order.claimedAmount ? h('div', null, h('dt', null, 'Amount you paid'), h('dd', null, inr(order.claimedAmount))) : null,
-          h('div', null, h('dt', null, 'UPI transaction ID'), h('dd', null, order.utr || '—')),
+          h('div', null, h('dt', null, 'UTR (last 5 digits)'), h('dd', null, order.utr || '—')),
           order.submittedAt ? h('div', null, h('dt', null, 'Submitted'), h('dd', null, BCP.dateTime(order.submittedAt))) : null),
         h('p', { class: 'status-hint' }, 'This page updates by itself — you can keep it open.'),
         Button('Check status now', { class: 'btn-ghost', onclick: async (e) => {
@@ -385,9 +404,9 @@
     let image = null;     // { mime, data, previewUrl }
     let busyPrepare = false;
 
-    const utrField = Field('f-utr', 'UPI transaction ID / UTR',
-      h('input', { type: 'text', name: 'utr', inputmode: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '40', placeholder: 'e.g. 426288001234' }),
-      'Find it in your payment app under “Transaction details” (usually 12 digits).');
+    const utrField = Field('f-utr', 'Last 5 digits of the UPI transaction ID / UTR',
+      h('input', { type: 'text', name: 'utr', inputmode: 'numeric', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'e.g. 01234' }),
+      'Open the payment in your UPI app, find “UPI transaction ID” (usually 12 digits) and enter only the last 5 digits.');
 
     const fileInput = h('input', { type: 'file', id: 'f-shot', class: 'file-input', accept: 'image/*' });
     const shotErr = h('p', { class: 'field-error', id: 'f-shot-err', role: 'alert' });
@@ -440,8 +459,8 @@
         formError.replaceChildren();
         if (busyPrepare) { setShotError('One moment — your screenshot is still being prepared.'); return; }
         const utr = utrField.input.value.replace(/\s+/g, '').toUpperCase();
-        const utrOk = /^[A-Z0-9]{8,30}$/.test(utr);
-        utrField.setError(utrOk ? '' : utr ? 'That doesn’t look right. A UTR has 8–30 letters and numbers, with no spaces or symbols.' : 'Enter the UPI transaction ID / UTR from your payment.');
+        const utrOk = /^[A-Z0-9]{5}$/.test(utr);
+        utrField.setError(utrOk ? '' : utr ? 'Enter only the last 5 digits of the transaction ID — exactly 5 characters, no spaces or symbols.' : 'Enter the last 5 digits of the UPI transaction ID from your payment.');
         setShotError(image ? '' : 'Please upload a screenshot of your payment so we can verify it.');
         const amount = picker.validate();
         if (amount === null) return;

@@ -379,3 +379,10 @@ main:focus { outline: none; }
 .pay-log { margin: 0; padding-left: 18px; font-size: 14px; color: var(--ink-2, #5c5f68); display: grid; gap: 6px; }
 /* Reserve room for the Drive-sharing check so the buttons below don't jump when it appears. */
 .drive-status { min-height: 32px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.history { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line, #efe3d9); }
+.history-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.history-main strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.history-meta { font-size: 13px; color: var(--ink-2, #5c5f68); }
+.history-total { margin-top: 8px; }
