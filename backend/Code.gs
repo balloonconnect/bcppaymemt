@@ -6,7 +6,8 @@
  *
  * Data lives in the "Orders" sheet (one row per order). Payment screenshots are
  * stored in a private Drive folder. The customer's Google Drive photo link is
- * only ever returned by the API once the order status is APPROVED.
+ * only ever returned by the API once the order status is APPROVED, which only
+ * happens when the verified payments add up to the full total.
  *
  * Script Properties (Project Settings → Script properties):
  *   GOOGLE_CLIENT_ID  OAuth client ID used by the admin Google sign-in (required)
@@ -23,12 +24,13 @@ var HEADERS = [
   'Reference', 'CustomerName', 'Phone', 'Email', 'EventType', 'EventDate',
   'Total', 'Paid', 'Status', 'UTR', 'ProofFileId', 'SubmittedAt', 'ReviewNote',
   'DriveUrl', 'ReviewedAt', 'VerifiedAmount', 'OwnerEmailStatus',
-  'CustomerEmailStatus', 'WhatsAppStatus'
+  'CustomerEmailStatus', 'WhatsAppStatus', 'PaymentAmount', 'PaymentLog'
 ];
 var ST = {
   NOT_SUBMITTED: 'NOT_SUBMITTED',
   PENDING: 'PENDING',
   NEEDS_CORRECTION: 'NEEDS_CORRECTION',
+  PARTIALLY_PAID: 'PARTIALLY_PAID',
   APPROVED: 'APPROVED'
 };
 var TZ = 'Asia/Kolkata';
@@ -115,6 +117,11 @@ function actionSubmitProof_(body) {
 
   var img = body.image || {};
   var mime = String(img.mime || '');
+  var hasAmount = body.amount !== undefined && body.amount !== null && String(body.amount).trim() !== '';
+  var amount = hasAmount ? Number(body.amount) : null;
+  if (hasAmount && (!isFinite(amount) || amount <= 0 || Math.abs(round2_(amount) - amount) > 1e-9)) {
+    throw new ApiError('invalid_amount', 'Enter the amount you paid as a number greater than zero (up to 2 decimals).');
+  }
   if (['image/jpeg', 'image/png', 'image/webp'].indexOf(mime) === -1 || typeof img.data !== 'string') {
     throw new ApiError('invalid_image', 'Please upload your payment screenshot as a JPG, PNG or WebP image.');
   }
@@ -136,7 +143,12 @@ function actionSubmitProof_(body) {
     var status = normStatus_(o.Status);
     if (status === ST.PENDING) throw new ApiError('already_pending', 'Your payment proof is already waiting for verification.');
     if (status === ST.APPROVED) throw new ApiError('already_approved', 'This payment has already been verified.');
-    if (publicOrder_(o).balance <= 0) throw new ApiError('no_payment_due', 'There is no balance due on this order.');
+    var due = publicOrder_(o).balance;
+    if (due <= 0) throw new ApiError('no_payment_due', 'There is no balance due on this order.');
+    if (amount === null) amount = due;
+    if (amount > due + 1e-9) {
+      throw new ApiError('amount_too_high', 'The amount cannot be more than the balance due (' + inr_(due) + ').');
+    }
 
     var ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
     var stamp = Utilities.formatDate(new Date(), TZ, 'yyyyMMdd-HHmmss');
@@ -147,6 +159,7 @@ function actionSubmitProof_(body) {
       UTR: utr,
       ProofFileId: file.getId(),
       SubmittedAt: new Date(),
+      PaymentAmount: round2_(amount),
       ReviewNote: '',
       ReviewedAt: '',
       OwnerEmailStatus: '',
@@ -178,7 +191,7 @@ function actionAdminList_(body) {
     }
   });
 
-  var pending = [], needs = [], approved = [];
+  var pending = [], needs = [], partial = [], approved = [];
   data.rows.forEach(function (r) {
     var o = rowToObj_(data.headers, r);
     var s = normStatus_(o.Status);
@@ -186,17 +199,20 @@ function actionAdminList_(body) {
     var item = adminOrder_(o, utrRefs);
     if (s === ST.PENDING) pending.push(item);
     else if (s === ST.NEEDS_CORRECTION) needs.push(item);
+    else if (s === ST.PARTIALLY_PAID) partial.push(item);
     else approved.push(item);
   });
   pending.sort(byTime_('submittedAt', 1));
   needs.sort(byTime_('reviewedAt', -1));
+  partial.sort(byTime_('reviewedAt', -1));
   approved.sort(byTime_('reviewedAt', -1));
 
   return {
     admin: admin,
     pendingCount: pending.length,
     needsCorrectionCount: needs.length,
-    orders: pending.concat(needs, approved.slice(0, ADMIN_LIST_APPROVED_LIMIT)),
+    partialCount: partial.length,
+    orders: pending.concat(needs, partial, approved.slice(0, ADMIN_LIST_APPROVED_LIMIT)),
     channels: { email: emailConfigured_(), whatsapp: false }
   };
 }
@@ -228,13 +244,22 @@ function actionAdminDecide_(body) {
   var decision = String(body.decision || '');
   var note = String(body.note || '').trim().slice(0, 600);
   var driveUrl = '';
+  var received = null;
 
   if (decision === 'approve') {
     if (body.verified !== true) {
       throw new ApiError('not_verified', 'Confirm that you checked the payment in your bank / UPI app before approving.');
     }
-    driveUrl = cleanDriveUrl_(body.driveUrl);
-    if (!driveUrl) throw new ApiError('invalid_drive_url', 'Enter a valid Google Drive folder or file link (https://drive.google.com/…).');
+    if (body.verifiedAmount !== undefined && body.verifiedAmount !== null && String(body.verifiedAmount).trim() !== '') {
+      received = Number(body.verifiedAmount);
+      if (!isFinite(received) || received <= 0 || Math.abs(round2_(received) - received) > 1e-9) {
+        throw new ApiError('invalid_amount', 'Enter the amount you received as a number greater than zero (up to 2 decimals).');
+      }
+    }
+    if (String(body.driveUrl || '').trim()) {
+      driveUrl = cleanDriveUrl_(body.driveUrl);
+      if (!driveUrl) throw new ApiError('invalid_drive_url', 'Enter a valid Google Drive folder or file link (https://drive.google.com/…).');
+    }
   } else if (decision === 'reject') {
     if (note.length < 5) throw new ApiError('note_required', 'Add a short note so the customer knows what to correct.');
   } else {
@@ -251,12 +276,30 @@ function actionAdminDecide_(body) {
     if (status !== ST.PENDING) {
       throw new ApiError('not_pending', 'This order is not waiting for review (current status: ' + status.replace(/_/g, ' ').toLowerCase() + ').');
     }
-    var balance = publicOrder_(found.order).balance;
+    var cur = publicOrder_(found.order);
+    var balance = cur.balance;
     if (decision === 'approve') {
-      updateRow_(found, {
-        Status: ST.APPROVED, DriveUrl: driveUrl, ReviewNote: note,
-        ReviewedAt: new Date(), VerifiedAmount: balance, CustomerEmailStatus: ''
-      });
+      if (received === null) received = num_(found.order.PaymentAmount) || balance;
+      if (received > balance + 1e-9) {
+        throw new ApiError('amount_too_high', 'The amount received cannot be more than the balance due (' + inr_(balance) + ').');
+      }
+      var total = num_(found.order.Total);
+      var newPaid = round2_(num_(found.order.Paid) + received);
+      var complete = newPaid >= total - 1e-9;
+      if (complete) {
+        driveUrl = driveUrl || cleanDriveUrl_(found.order.DriveUrl);
+        if (!driveUrl) throw new ApiError('invalid_drive_url', 'This approval completes the payment — add the Google Drive link for the photos (https://drive.google.com/…).');
+      }
+      var logLine = Utilities.formatDate(new Date(), TZ, 'dd MMM yyyy HH:mm') + ' — ' + inr_(received) + ' verified (UTR ' + String(found.order.UTR || '—') + ') by ' + admin;
+      var patch = {
+        Status: complete ? ST.APPROVED : ST.PARTIALLY_PAID,
+        Paid: complete ? total : newPaid,
+        ReviewNote: note, ReviewedAt: new Date(), VerifiedAmount: received,
+        PaymentAmount: '', CustomerEmailStatus: '',
+        PaymentLog: (String(found.order.PaymentLog || '') ? String(found.order.PaymentLog) + '\n' : '') + logLine
+      };
+      if (driveUrl) patch.DriveUrl = driveUrl;
+      updateRow_(found, patch);
     } else {
       updateRow_(found, {
         Status: ST.NEEDS_CORRECTION, ReviewNote: note,
@@ -268,13 +311,14 @@ function actionAdminDecide_(body) {
     lock.releaseLock();
   }
 
-  var result = notifyCustomerDecision_(order, decision);
+  var outcome = decision === 'reject' ? 'reject' : (normStatus_(order.Status) === ST.APPROVED ? 'approve' : 'partial');
+  var result = notifyCustomerDecision_(order, outcome);
   updateRow_(findOrder_(ref), { CustomerEmailStatus: result });
   var fresh = findOrder_(ref).order;
   return {
     reviewedBy: admin,
     order: adminOrder_(fresh, {}),
-    driveCheck: decision === 'approve' ? checkDriveShare_(driveUrl) : null
+    driveCheck: outcome === 'approve' ? checkDriveShare_(driveUrl) : null
   };
 }
 
@@ -295,9 +339,10 @@ function publicOrder_(o) {
     paid: paid,
     balance: balance,
     status: status,
-    utr: status === ST.NOT_SUBMITTED ? '' : String(o.UTR || '').trim(),
+    utr: (status === ST.PENDING || status === ST.NEEDS_CORRECTION || status === ST.APPROVED) ? String(o.UTR || '').trim() : '',
     submittedAt: iso_(o.SubmittedAt),
-    reviewNote: status === ST.NEEDS_CORRECTION ? String(o.ReviewNote || '') : '',
+    claimedAmount: status === ST.PENDING ? num_(o.PaymentAmount) : 0,
+    reviewNote: (status === ST.NEEDS_CORRECTION || status === ST.PARTIALLY_PAID) ? String(o.ReviewNote || '') : '',
     // The photo link is only ever released for approved orders.
     driveUrl: status === ST.APPROVED ? cleanDriveUrl_(o.DriveUrl) : ''
   };
@@ -305,7 +350,7 @@ function publicOrder_(o) {
 
 function adminOrder_(o, utrRefs) {
   var base = publicOrder_(o);
-  var u = base.utr.toUpperCase();
+  var u = String(o.UTR || '').trim().toUpperCase();
   var others = ((utrRefs && utrRefs[u]) || []).filter(function (r) { return r !== base.reference; });
   base.phone = String(o.Phone || '').trim();
   base.email = String(o.Email || '').trim();
@@ -313,6 +358,8 @@ function adminOrder_(o, utrRefs) {
   base.driveUrl = cleanDriveUrl_(o.DriveUrl);
   base.reviewedAt = iso_(o.ReviewedAt);
   base.verifiedAmount = o.VerifiedAmount === '' ? null : num_(o.VerifiedAmount);
+  base.paymentLog = String(o.PaymentLog || '');
+  base.utr = String(o.UTR || '').trim();
   base.hasProof = !!String(o.ProofFileId || '').trim();
   base.duplicateUtrRefs = others;
   base.notifications = {
@@ -602,6 +649,13 @@ function notifyCustomerDecision_(o, decision) {
       '<p style="margin:0">Hi ' + esc_(pub.customerName) + ', your payment has been verified. Open your delivery page to view and download your photos.</p>',
       'View my photos', link);
     text = 'Hi ' + pub.customerName + ', your payment is verified and your photos are ready. ' + (link ? 'Open: ' + link : '');
+  } else if (decision === 'partial') {
+    subject = 'Payment received — balance ' + inr_(pub.balance) + ' — ' + pub.reference;
+    html = emailShell_('Payment received',
+      '<p style="margin:0 0 12px">Hi ' + esc_(pub.customerName) + ', we have verified your payment. You have paid ' + inr_(pub.paid) + ' of ' + inr_(pub.total) + '.</p>' +
+      '<p style="margin:0">Your photos unlock once the remaining balance of <strong>' + inr_(pub.balance) + '</strong> is paid and verified.</p>',
+      'Pay the balance', link);
+    text = 'Hi ' + pub.customerName + ', we verified your payment. Paid ' + inr_(pub.paid) + ' of ' + inr_(pub.total) + '. Balance ' + inr_(pub.balance) + ' — photos unlock once it is paid. ' + (link ? 'Open: ' + link : '');
   } else {
     subject = 'Payment needs a correction — ' + pub.reference;
     html = emailShell_('Payment needs a correction',

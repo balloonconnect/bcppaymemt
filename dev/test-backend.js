@@ -132,7 +132,6 @@ t('approval needs verification + a real Google Drive link', () => {
   g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
   const base = { action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve' };
   assert.equal(g.call({ ...base, verified: false, driveUrl: DRIVE }).error, 'not_verified');
-  assert.equal(g.call({ ...base, verified: true, driveUrl: '' }).error, 'invalid_drive_url');
   assert.equal(g.call({ ...base, verified: true, driveUrl: 'https://evil.example.com/drive.google.com/folders/1AbCdEfGhIjKlMnOp' }).error, 'invalid_drive_url');
   assert.equal(g.call({ ...base, verified: true, driveUrl: 'javascript:alert(1)' }).error, 'invalid_drive_url');
   assert.equal(login(g).data.order.status, 'PENDING');
@@ -169,11 +168,90 @@ t('rejection keeps the link hidden, shows the note, and allows re-upload', () =>
   const again = g.call({ action: 'submitProof', token, utr: 'NEWUTR987654', image: IMG });
   assert.equal(again.ok, true); assert.equal(again.data.order.status, 'PENDING'); assert.equal(again.data.order.reviewNote, '');
 });
-t('never edits the owner-maintained Paid / Total columns', () => {
+t('never edits the Total column; Paid rises only by the verified amount', () => {
   const g = fresh(); const { token } = login(g).data;
-  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
-  g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true, driveUrl: DRIVE });
-  const row = g.readOrder('BCP-2026-0148'); assert.equal(row.Paid, 5000); assert.equal(row.Total, 12000);
+  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true });
+  const row = g.readOrder('BCP-2026-0148'); assert.equal(row.Paid, 7000); assert.equal(row.Total, 12000);
+});
+
+console.log('Full or custom payment');
+const decide = (g, extra) => g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0148', decision: 'approve', verified: true, ...extra });
+t('a customer can pay a custom amount; the amount is validated', () => {
+  const g = fresh(); const { token } = login(g).data;
+  const sub = (amount) => g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount });
+  assert.equal(sub(0).error, 'invalid_amount'); assert.equal(sub(-5).error, 'invalid_amount');
+  assert.equal(sub('abc').error, 'invalid_amount'); assert.equal(sub(10.123).error, 'invalid_amount');
+  assert.equal(sub(7000.01).error, 'amount_too_high');
+  const ok = sub(2000);
+  assert.equal(ok.ok, true); assert.equal(ok.data.order.status, 'PENDING'); assert.equal(ok.data.order.claimedAmount, 2000);
+  assert.equal(ok.data.order.balance, 7000, 'balance does not change until the owner verifies');
+});
+t('omitting the amount means the full balance', () => {
+  const g = fresh(); const { token } = login(g).data;
+  const r = g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG });
+  assert.equal(r.data.order.claimedAmount, 7000);
+});
+t('a partial payment updates paid / balance but keeps the photos locked', () => {
+  const g = fresh(); const { token } = login(g).data;
+  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  const r = decide(g, { note: 'Received ₹2,000, thanks' });
+  assert.equal(r.ok, true); assert.equal(r.data.order.status, 'PARTIALLY_PAID'); assert.equal(r.data.order.verifiedAmount, 2000);
+  const cust = g.call({ action: 'status', token }).data.order;
+  assert.equal(cust.status, 'PARTIALLY_PAID'); assert.equal(cust.paid, 7000); assert.equal(cust.balance, 5000);
+  assert.equal(cust.driveUrl, '', 'link must stay hidden until fully paid');
+  assert.ok(!JSON.stringify(cust).includes('drive.google.com'));
+  assert.equal(cust.utr, ''); assert.equal(cust.reviewNote, 'Received ₹2,000, thanks');
+  assert.ok(g.outbox[1].payload.subject.includes('balance'), 'customer gets a balance email');
+  assert.ok(!g.outbox[1].payload.html.includes('drive.google.com'));
+  assert.ok(g.readOrder('BCP-2026-0148').PaymentLog.includes('₹2,000'));
+});
+t('the customer can pay again after a partial payment; the final payment unlocks the photos', () => {
+  const g = fresh(); const { token } = login(g).data;
+  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  decide(g, {});
+  const second = g.call({ action: 'submitProof', token, utr: 'SECONDUTR9999', image: IMG, amount: 5000 });
+  assert.equal(second.ok, true); assert.equal(second.data.order.claimedAmount, 5000);
+  assert.equal(g.call({ action: 'submitProof', token, utr: 'THIRDUTR99999', image: IMG, amount: 100 }).error, 'already_pending');
+  const fin = decide(g, {});
+  assert.equal(fin.data.order.status, 'APPROVED');
+  const cust = g.call({ action: 'status', token }).data.order;
+  assert.equal(cust.driveUrl, DRIVE); assert.equal(cust.balance, 0); assert.equal(cust.paid, 12000);
+  assert.equal(g.readOrder('BCP-2026-0148').Paid, 12000);
+  assert.equal(g.call({ action: 'submitProof', token, utr: 'FOURTHUTR9999', image: IMG }).error, 'already_approved');
+});
+t('the owner can correct the received amount; it cannot exceed the balance', () => {
+  const g = fresh(); const { token } = login(g).data;
+  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 3000 });
+  assert.equal(decide(g, { verifiedAmount: 7000.5 }).error, 'amount_too_high');
+  assert.equal(decide(g, { verifiedAmount: 0 }).error, 'invalid_amount');
+  const r = decide(g, { verifiedAmount: 1500 });
+  assert.equal(r.data.order.status, 'PARTIALLY_PAID'); assert.equal(r.data.order.paid, 6500); assert.equal(r.data.order.balance, 5500);
+});
+t('completing the payment needs a Drive link (from the sheet or the form)', () => {
+  const g = fresh(); const t3 = login(g, 'BCP-2026-0150', '9000000002').data.token;
+  g.call({ action: 'submitProof', token: t3, utr: '426288001234', image: IMG });
+  const base = { action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'approve', verified: true };
+  assert.equal(g.call({ ...base, driveUrl: '' }).error, 'invalid_drive_url');
+  const ok = g.call({ ...base, driveUrl: DRIVE });
+  assert.equal(ok.data.order.status, 'APPROVED'); assert.equal(g.call({ action: 'status', token: t3 }).data.order.driveUrl, DRIVE);
+});
+t('a partial approval does not need a Drive link, and a rejected partial payment changes nothing', () => {
+  const g = fresh(); const t3 = login(g, 'BCP-2026-0150', '9000000002').data.token;
+  g.call({ action: 'submitProof', token: t3, utr: '426288001234', image: IMG, amount: 1000 });
+  const r = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'approve', verified: true, verifiedAmount: 1000 });
+  assert.equal(r.data.order.status, 'PARTIALLY_PAID'); assert.equal(r.data.order.balance, 4000);
+  g.call({ action: 'submitProof', token: t3, utr: 'ANOTHERUTR123', image: IMG, amount: 500 });
+  const rej = g.call({ action: 'admin.decide', idToken: 'GOOD', ref: 'BCP-2026-0150', decision: 'reject', note: 'Not received in bank.' });
+  assert.equal(rej.data.order.status, 'NEEDS_CORRECTION'); assert.equal(rej.data.order.paid, 2000);
+  assert.equal(g.readOrder('BCP-2026-0150').Paid, 2000);
+});
+t('admin list shows part-paid orders in their own bucket', () => {
+  const g = fresh(); const { token } = login(g).data;
+  g.call({ action: 'submitProof', token, utr: '426288001234', image: IMG, amount: 2000 });
+  decide(g, {});
+  const r = g.call({ action: 'admin.list', idToken: 'GOOD' }).data;
+  assert.equal(r.partialCount, 1); assert.equal(r.pendingCount, 0); assert.equal(r.orders[0].status, 'PARTIALLY_PAID');
 });
 
 console.log(`\n${passed} backend checks passed`);

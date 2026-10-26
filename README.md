@@ -32,6 +32,7 @@ Add one row per customer in `Orders`: `Reference` (e.g. `BCP-2026-0148`), `Custo
 Customer link: `https://your-site/?ref=BCP-2026-0148` (they confirm with their phone number).
 - The app never edits `Total`/`Paid`; on approval it shows the balance as cleared and records `VerifiedAmount`.
 - Already paid in full? Set `Status` = `APPROVED` and paste `DriveUrl` in the sheet to release photos.
+- **Full or custom payment:** the customer chooses to pay the full balance or a custom amount. When you approve, you confirm the amount actually received; `Paid` goes up by that amount. The order becomes `PARTIALLY_PAID` (photos stay locked, the customer can pay again) until `Paid` reaches `Total`, then `APPROVED` and the `DriveUrl` is released. Each verified payment is appended to the `PaymentLog` column. After updating the backend code, run **BCP Portal → Set up sheet & folders** once to add the new `PaymentAmount` and `PaymentLog` columns.
 
 ### 3. Admin Google sign-in
 Google Cloud Console → *APIs & Services → Credentials → Create OAuth client ID → Web application*. Add your site URL (and `http://localhost:5173` for testing) under **Authorized JavaScript origins**. Copy the client ID into the Script property and `site/config.js`.
@@ -54,5 +55,5 @@ Customer submits → you get an email → open `/#/admin` → check the money in
 ```
 node dev/server.js          # http://localhost:5173 — real backend code on in-memory fakes, emails captured
 node dev/test-backend.js    # 19 backend checks
-python3 dev/e2e.py          # 30 browser checks (needs: pip install playwright pillow; playwright install chromium)
+python3 dev/e2e.py          # 42 browser checks (needs: pip install playwright pillow; playwright install chromium)
 ```

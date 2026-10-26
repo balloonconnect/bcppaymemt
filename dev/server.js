@@ -21,6 +21,7 @@ const seed = [
   { Reference: 'BCP-2026-0148', CustomerName: 'Priya Raman', Phone: '9876543210', Email: 'priya@example.com', EventType: 'Baby Shoot', EventDate: new Date('2026-10-12T00:00:00+05:30'), Total: 12000, Paid: 5000 },
   { Reference: 'BCP-2026-0149', CustomerName: 'Arun Kumar', Phone: '9000000001', Email: '', EventType: 'Housewarming', EventDate: new Date('2026-10-15T00:00:00+05:30'), Total: 8000, Paid: 2500 },
   { Reference: 'BCP-2026-0150', CustomerName: 'Meena Subramanian', Phone: '9000000002', Email: '', EventType: 'Birthday', EventDate: new Date('2026-10-20T00:00:00+05:30'), Total: 6000, Paid: 6000 },
+  { Reference: 'BCP-2026-0152', CustomerName: 'Divya Menon', Phone: '9000000004', Email: 'divya@example.com', EventType: 'Newborn', EventDate: new Date('2026-10-24T00:00:00+05:30'), Total: 10000, Paid: 0 },
   { Reference: 'BCP-2026-0151', CustomerName: 'Karthik Rao', Phone: '9000000003', Email: '', EventType: 'Engagement', EventDate: new Date('2026-10-22T00:00:00+05:30'), Total: 30000, Paid: 10000 },
 ];
 seed.forEach((o) => gas.addOrder(o));
