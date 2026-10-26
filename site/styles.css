@@ -326,7 +326,6 @@ main:focus { outline: none; }
 .check-row { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border-radius: var(--radius-sm); background: var(--bg); border: 2px solid var(--line); }
 .check-row input { width: 24px; height: 24px; margin: 1px 0 0; flex: none; accent-color: var(--green); cursor: pointer; }
 .check-row label { cursor: pointer; font-size: 15px; }
-.drive-status:empty { display: none; }
 .n-detail { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .notif-list { display: grid; gap: 4px; }
 .notif-row { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
@@ -356,3 +355,27 @@ main:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
+
+/* ───────── Pay full / custom amount ───────── */
+.pay-choice { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+.pay-choice legend { padding: 0; margin-bottom: 8px; }
+.pay-options { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+.pay-option {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; cursor: pointer;
+  border: 1.5px solid var(--line, #efe3d9); border-radius: 14px; background: #fff;
+}
+.pay-option input { margin-top: 3px; accent-color: var(--orange, #f26a21); flex: none; }
+.pay-option span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pay-option strong { font-size: 15px; }
+.pay-option em { font-style: normal; font-size: 13px; color: var(--ink-2, #5c5f68); }
+.pay-option.is-on { border-color: var(--orange, #f26a21); background: var(--orange-soft, #fff1e8); }
+.pay-option:focus-within { outline: 3px solid var(--orange, #f26a21); outline-offset: 2px; }
+.pay-choice .field { margin-top: 12px; }
+.qr-box { display: contents; }
+.submit-note { margin: 4px 0 10px; font-size: 14px; font-weight: 600; color: var(--ink-2, #5c5f68); }
+@media (max-width: 480px) { .pay-options { grid-template-columns: 1fr; } }
+
+.outcome { margin: 4px 0 12px; font-size: 14px; font-weight: 600; color: var(--ink-2, #5c5f68); min-height: 1.2em; }
+.pay-log { margin: 0; padding-left: 18px; font-size: 14px; color: var(--ink-2, #5c5f68); display: grid; gap: 6px; }
+/* Reserve room for the Drive-sharing check so the buttons below don't jump when it appears. */
+.drive-status { min-height: 32px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

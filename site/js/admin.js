@@ -24,7 +24,7 @@
     set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* private mode */ } },
     del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* private mode */ } }
   };
-  const tabOf = (o) => (o.status === 'PENDING' ? 'pending' : o.status === 'NEEDS_CORRECTION' ? 'needs' : 'approved');
+  const tabOf = (o) => (o.status === 'PENDING' ? 'pending' : o.status === 'NEEDS_CORRECTION' ? 'needs' : o.status === 'PARTIALLY_PAID' ? 'partial' : 'approved');
   const isDriveUrl = (u) => /^https:\/\/drive\.google\.com\/\S+$/i.test(u) && /\/folders\/[\w-]{10,}|\/file\/d\/[\w-]{10,}|[?&]id=[\w-]{10,}/.test(u);
 
   function parseJwt(t) {
@@ -200,7 +200,7 @@
   }
 
   function MainView() {
-    const counts = { pending: A.pendingCount, needs: A.needsCount, approved: A.orders.filter((o) => o.status === 'APPROVED').length };
+    const counts = { pending: A.pendingCount, needs: A.needsCount, partial: A.orders.filter((o) => tabOf(o) === 'partial').length, approved: A.orders.filter((o) => tabOf(o) === 'approved').length };
     const list = A.orders.filter((o) => tabOf(o) === A.tab);
     const sel = A.orders.find((o) => o.reference === A.selected && tabOf(o) === A.tab);
     const tab = (id, label) => h('button', {
@@ -212,19 +212,19 @@
       Header(),
       h('div', { class: 'admin-grid' },
         h('aside', { class: 'queue', 'aria-label': 'Submissions' },
-          h('nav', { class: 'tabs', 'aria-label': 'Filter submissions' }, tab('pending', 'Pending'), tab('needs', 'Needs correction'), tab('approved', 'Approved')),
+          h('nav', { class: 'tabs', 'aria-label': 'Filter submissions' }, tab('pending', 'Pending'), tab('needs', 'Needs correction'), tab('partial', 'Part paid'), tab('approved', 'Approved')),
           list.length ? h('div', { class: 'queue-list' }, list.map(QueueItem)) : EmptyList()),
         sel ? Detail(sel) : h('section', { class: 'detail' }, h('div', { class: 'card empty' }, icon('inbox', 36), h('p', null, A.tab === 'pending' ? 'Select a submission to review it.' : 'Nothing selected.')))));
   }
 
   function EmptyList() {
-    const msg = { pending: ['No payments waiting for review', 'New payment proofs appear here automatically.'], needs: ['Nothing needs correction', 'Orders you send back for correction show up here.'], approved: ['No approved payments yet', 'Approved orders show up here.'] }[A.tab];
+    const msg = { pending: ['No payments waiting for review', 'New payment proofs appear here automatically.'], needs: ['Nothing needs correction', 'Orders you send back for correction show up here.'], partial: ['No part-paid orders', 'Orders where the customer has paid only part of the total show up here.'], approved: ['No approved payments yet', 'Approved orders show up here.'] }[A.tab];
     return h('div', { class: 'card empty' }, icon('inbox', 36), h('strong', null, msg[0]), h('p', null, msg[1]));
   }
 
   function QueueItem(o) {
     const selected = o.reference === A.selected;
-    const amt = o.status === 'APPROVED' ? (o.verifiedAmount != null ? o.verifiedAmount : o.total) : o.balance;
+    const amt = (o.status === 'APPROVED' || o.status === 'PARTIALLY_PAID') ? (o.verifiedAmount != null ? o.verifiedAmount : o.total) : (o.status === 'PENDING' && o.claimedAmount) ? o.claimedAmount : o.balance;
     return h('button', {
       type: 'button', class: 'queue-item' + (selected ? ' is-selected' : ''), 'aria-current': selected ? 'true' : null,
       onclick: () => select(o.reference)
@@ -237,7 +237,8 @@
   }
 
   function StatusBadge(o) {
-    return o.status === 'APPROVED' ? Badge('ok', 'Approved', 'check')
+    return o.status === 'APPROVED' ? Badge('ok', 'Fully paid', 'check')
+      : o.status === 'PARTIALLY_PAID' ? Badge('warn', 'Part paid', 'info')
       : o.status === 'NEEDS_CORRECTION' ? Badge('bad', 'Needs correction', 'alert')
       : Badge('warn', 'Pending review', 'clock');
   }
@@ -265,8 +266,11 @@
               h('div', { class: 'detail-row' }, h('dt', null, 'Phone'), h('dd', null, o.phone ? h('a', { href: 'tel:' + o.phone.replace(/[^\d+]/g, '') }, o.phone) : '—')),
               o.email ? row('Email', o.email) : null,
               h('div', { class: 'detail-row' }, h('dt', null, 'UPI transaction ID / UTR'), h('dd', { class: 'utr' }, h('span', null, o.utr || '—'), utrCopy)),
+              o.status === 'PENDING' && o.claimedAmount ? row('Customer says they paid', inr(o.claimedAmount)) : null,
               row('Submitted', BCP.dateTime(o.submittedAt)))),
           PaymentSummary(o, { balanceLabel: 'Balance due' }),
+          o.paymentLog ? h('div', { class: 'card' }, h('h3', { class: 'card-title' }, 'Payment history'),
+            h('ul', { class: 'pay-log' }, o.paymentLog.split('\n').map((l) => h('li', null, l)))) : null,
           NotificationsCard(o)),
         h('div', { class: 'stack' }, ScreenshotCard(o), o.status === 'PENDING' ? ActionsCard(o) : ReviewedCard(o))));
   }
@@ -274,8 +278,10 @@
   function FlashNotice(o) {
     const f = A.flash;
     const nodes = [];
-    if (f.kind === 'approve') {
-      nodes.push(Notice('ok', [h('strong', null, 'Payment approved. '), (o.customerName || 'The customer') + '’s page now shows “View & Download Photos”.']));
+    if (f.kind === 'partial') {
+      nodes.push(Notice('ok', [h('strong', null, 'Partial payment recorded. '), 'Paid ' + inr(o.paid) + ' of ' + inr(o.total) + ' — balance ' + inr(o.balance) + '. The photos stay locked until the full payment is verified.']));
+    } else if (f.kind === 'approve') {
+      nodes.push(Notice('ok', [h('strong', null, 'Payment complete. '), (o.customerName || 'The customer') + '’s page now shows “View & Download Photos”.']));
       if (f.driveCheck === 'restricted') nodes.push(Notice('warn', [h('strong', null, 'Check the Drive sharing. '), 'That folder isn’t shared with “Anyone with the link”, so the customer may not be able to open it. Change its sharing in Drive — no change is needed here.']));
       else if (f.driveCheck === 'unverified') nodes.push(Notice('info', 'We couldn’t check that folder’s sharing from here. Open the link in a private window to confirm customers can view it.'));
     } else {
@@ -337,18 +343,40 @@
   }
 
   function ActionsCard(o) {
-    const d = (drafts[o.reference] = drafts[o.reference] || { verified: false, driveUrl: '', note: '' });
+    const d = (drafts[o.reference] = drafts[o.reference] || { verified: false, driveUrl: o.driveUrl || '', note: '', amount: String(o.claimedAmount || o.balance) });
 
     const verified = h('input', { type: 'checkbox', id: 'a-verified', onchange: (e) => { d.verified = e.target.checked; verifiedErr.textContent = ''; } });
     verified.checked = d.verified;
     const verifiedErr = h('p', { class: 'field-error', id: 'a-verified-err', role: 'alert' });
     const verifyRow = h('div', { class: 'check-row' },
       verified,
-      h('label', { for: 'a-verified' }, 'I checked my bank / UPI app and confirm ', h('strong', null, inr(o.balance)), ' was received for UTR ', h('strong', null, o.utr || '—'), '.'));
+      h('label', { for: 'a-verified' }, 'I checked my bank / UPI app and confirm the amount below was received for UTR ', h('strong', null, o.utr || '—'), '.'));
+
+    const amountField = Field('a-amount', 'Amount received (₹)',
+      h('input', { type: 'text', name: 'amount', inputmode: 'decimal', autocomplete: 'off', maxlength: '10' }),
+      o.claimedAmount ? 'The customer says they paid ' + inr(o.claimedAmount) + '. Change this if your bank shows a different amount.' : 'Balance due is ' + inr(o.balance) + '.');
+    amountField.input.value = d.amount;
+    const outcome = h('p', { class: 'outcome', 'aria-live': 'polite' });
+    const parseAmt = () => {
+      const raw = amountField.input.value.replace(/[,\s₹]/g, '');
+      if (!/^\d+(\.\d{1,2})?$/.test(raw)) return null;
+      const n = Number(raw); return n > 0 ? n : null;
+    };
+    const updateOutcome = () => {
+      const n = parseAmt();
+      if (n === null) { outcome.textContent = ''; return; }
+      if (n > o.balance) { outcome.textContent = 'That is more than the balance due (' + inr(o.balance) + ').'; return; }
+      const left = Math.round((o.balance - n) * 100) / 100;
+      outcome.textContent = left <= 0
+        ? 'This completes the payment — the photos will unlock for the customer.'
+        : 'Balance after approval: ' + inr(left) + '. The photos stay locked until the full payment is verified.';
+    };
+    amountField.input.addEventListener('input', () => { d.amount = amountField.input.value; amountField.setError(''); updateOutcome(); });
+    updateOutcome();
 
     const driveField = Field('a-drive', 'Google Drive folder link',
       h('input', { type: 'url', name: 'driveUrl', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'https://drive.google.com/drive/folders/…' }),
-      'Share the folder as “Anyone with the link → Viewer”. The customer only sees this link after you approve.');
+      'Share the folder as “Anyone with the link → Viewer”. Needed when this approval completes the payment; the customer only sees the link once the full payment is verified.');
     driveField.input.value = d.driveUrl;
     const driveStatus = h('div', { class: 'drive-status', 'aria-live': 'polite' });
     let checkSeq = 0;
@@ -384,13 +412,17 @@
 
     async function decide(kind) {
       formError.replaceChildren();
-      verifiedErr.textContent = ''; driveField.setError(''); noteField.setError('');
+      verifiedErr.textContent = ''; driveField.setError(''); noteField.setError(''); amountField.setError('');
       const url = driveField.input.value.trim();
       const note = noteField.input.value.trim();
+      const amount = parseAmt();
       if (kind === 'approve') {
         let first = null;
         if (!verified.checked) { verifiedErr.textContent = 'Confirm you verified this payment in your bank or UPI app.'; first = first || verified; }
-        if (!isDriveUrl(url)) { driveField.setError(url ? 'That doesn’t look like a Google Drive link. It should start with https://drive.google.com/' : 'Paste the Google Drive link to this customer’s photos.'); first = first || driveField.input; }
+        if (amount === null || amount > o.balance) { amountField.setError(amount === null ? 'Enter the amount you received, e.g. 2000.' : 'That is more than the balance due (' + inr(o.balance) + ').'); first = first || amountField.input; }
+        const completes = amount !== null && amount >= o.balance;
+        if (completes && !isDriveUrl(url)) { driveField.setError(url ? 'That doesn’t look like a Google Drive link. It should start with https://drive.google.com/' : 'This approval completes the payment — paste the Google Drive link to this customer’s photos.'); first = first || driveField.input; }
+        if (!completes && url && !isDriveUrl(url)) { driveField.setError('That doesn’t look like a Google Drive link. It should start with https://drive.google.com/'); first = first || driveField.input; }
         if (first) { first.focus(); return; }
       } else if (note.length < 5) {
         noteField.setError('Add a short note so the customer knows what to correct.'); noteField.input.focus(); return;
@@ -399,23 +431,25 @@
       setBusy(btn, true, kind === 'approve' ? 'Approving…' : 'Sending back…');
       (kind === 'approve' ? reject : approve).disabled = true;
       try {
-        const r = await api('admin.decide', { idToken: A.idToken, ref: o.reference, decision: kind, note, driveUrl: kind === 'approve' ? url : '', verified: kind === 'approve' ? verified.checked : false }, { timeoutMs: 60000 });
+        const r = await api('admin.decide', { idToken: A.idToken, ref: o.reference, decision: kind, note, driveUrl: kind === 'approve' ? url : '', verifiedAmount: kind === 'approve' ? amount : undefined, verified: kind === 'approve' ? verified.checked : false }, { timeoutMs: 60000 });
         const i = A.orders.findIndex((x) => x.reference === o.reference);
         if (i >= 0) A.orders[i] = r.order; else A.orders.unshift(r.order);
         A.pendingCount = Math.max(0, A.pendingCount - 1);
         if (kind === 'reject') A.needsCount += 1;
         delete drafts[o.reference];
-        A.flash = { ref: o.reference, kind, driveCheck: r.driveCheck };
-        A.tab = kind === 'approve' ? 'approved' : 'needs'; A.selected = o.reference;
+        const outcomeKind = kind === 'reject' ? 'reject' : (r.order.status === 'APPROVED' ? 'approve' : 'partial');
+        A.flash = { ref: o.reference, kind: outcomeKind, driveCheck: r.driveCheck };
+        A.tab = outcomeKind === 'approve' ? 'approved' : outcomeKind === 'partial' ? 'partial' : 'needs'; A.selected = o.reference;
         lastSig = '';
         render();
-        BCP.toast(kind === 'approve' ? 'Payment approved' : 'Sent back for correction');
+        BCP.toast(outcomeKind === 'approve' ? 'Payment complete — photos unlocked' : outcomeKind === 'partial' ? 'Partial payment recorded' : 'Sent back for correction');
         const f = document.getElementById('flash'); if (f) f.focus();
       } catch (e) {
         setBusy(btn, false); (kind === 'approve' ? reject : approve).disabled = false;
         if (e.code === 'unauthorized' || e.code === 'forbidden') { signOut(e.message); return; }
         if (e.code === 'not_pending') { formError.replaceChildren(Notice('warn', e.message)); loadList(true); return; }
         if (e.code === 'invalid_drive_url') driveField.setError(e.message);
+        else if (e.code === 'invalid_amount' || e.code === 'amount_too_high') amountField.setError(e.message);
         else if (e.code === 'note_required') noteField.setError(e.message);
         else formError.replaceChildren(Notice('bad', e.message));
       }
@@ -425,6 +459,7 @@
       h('h3', { id: 'actions-title', class: 'card-title' }, 'Review & decide'),
       h('p', { class: 'field-hint' }, 'Check the amount and UTR in your bank or UPI app first — the screenshot alone isn’t proof.'),
       verifyRow, verifiedErr,
+      amountField.el, outcome,
       driveField.el, driveStatus,
       noteField.el, formError,
       h('div', { class: 'btn-row btn-row-split' }, approve, reject));
@@ -433,17 +468,18 @@
   function ReviewedCard(o) {
     const rows = [];
     if (o.reviewedAt) rows.push(h('div', { class: 'detail-row' }, h('dt', null, 'Reviewed'), h('dd', null, BCP.dateTime(o.reviewedAt))));
-    if (o.status === 'APPROVED') {
-      rows.push(h('div', { class: 'detail-row' }, h('dt', null, 'Verified amount'), h('dd', null, inr(o.verifiedAmount != null ? o.verifiedAmount : o.total))));
+    if (o.status === 'APPROVED' || o.status === 'PARTIALLY_PAID') {
+      rows.push(h('div', { class: 'detail-row' }, h('dt', null, o.status === 'APPROVED' ? 'Last verified amount' : 'Verified amount'), h('dd', null, inr(o.verifiedAmount != null ? o.verifiedAmount : o.total))));
       rows.push(h('div', { class: 'detail-row' }, h('dt', null, 'Photos link'), h('dd', null, o.driveUrl
         ? h('a', { href: o.driveUrl, target: '_blank', rel: 'noopener noreferrer', class: 'ext-link' }, 'Open Drive folder', icon('external', 16))
         : '—')));
     }
     return h('div', { class: 'card' },
-      h('h3', { class: 'card-title' }, o.status === 'APPROVED' ? 'Approved' : 'Sent back for correction'),
+      h('h3', { class: 'card-title' }, o.status === 'APPROVED' ? 'Fully paid' : o.status === 'PARTIALLY_PAID' ? 'Partially paid' : 'Sent back for correction'),
       h('dl', { class: 'details' }, rows),
       o.reviewNote ? h('blockquote', { class: 'review-note' }, h('span', null, o.status === 'APPROVED' ? 'Your note' : 'Note shown to the customer'), o.reviewNote) : null,
-      o.status === 'NEEDS_CORRECTION' ? h('p', { class: 'field-hint' }, 'Waiting for the customer to upload new proof. The download link stays hidden.') : null);
+      o.status === 'NEEDS_CORRECTION' ? h('p', { class: 'field-hint' }, 'Waiting for the customer to upload new proof. The download link stays hidden.') : null,
+      o.status === 'PARTIALLY_PAID' ? h('p', { class: 'field-hint' }, 'Waiting for the customer to pay the remaining ' + inr(o.balance) + '. The download link stays hidden until the full payment is verified.') : null);
   }
 
   BCP.admin = { start, stop };
